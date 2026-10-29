@@ -191,7 +191,7 @@ GO
 
 TRUNCATE TABLE bronze.students;
 BULK INSERT bronze.students
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\students.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\students.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -204,7 +204,7 @@ GO
 
 TRUNCATE TABLE bronze.assessment;
 BULK INSERT bronze.assessment
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\assessments.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\assessments.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -217,7 +217,7 @@ GO
 
 TRUNCATE TABLE bronze.attendance;
 BULK INSERT bronze.attendance
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\attendance.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\attendance.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -230,7 +230,7 @@ GO
 
 TRUNCATE TABLE bronze.course;
 BULK INSERT bronze.course
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\courses.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\courses.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -243,7 +243,7 @@ GO
 
 TRUNCATE TABLE bronze.enrollment;
 BULK INSERT bronze.enrollment
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\enrollments.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\enrollments.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -256,7 +256,7 @@ GO
 
 TRUNCATE TABLE bronze.final_results;
 BULK INSERT bronze.final_results
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\final_results.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\final_results.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -269,7 +269,7 @@ GO
 
 TRUNCATE TABLE bronze.lms_activity;
 BULK INSERT bronze.lms_activity
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\lms_activity.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\lms_activity.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -282,7 +282,7 @@ GO
 
 TRUNCATE TABLE bronze.student_support;
 BULK INSERT bronze.student_support
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\student_support.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\student_support.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -295,7 +295,7 @@ GO
 
 TRUNCATE TABLE bronze.weekly_snapshots;
 BULK INSERT bronze.weekly_snapshots
-FROM 'C:\Users\Adham\Desktop\Projects-DEPI\FinalProject\student_performance_data\weekly_snapshots.csv'
+FROM 'E:\DEPI\Final_Project\student_performance_data\student_performance_data\weekly_snapshots.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -306,12 +306,23 @@ WITH (
 
 GO
 
--- silver tables creation
 
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'student' AND schema_id = schema_id('silver'))
+--==================================================
+-- silver tables creation
+--==================================================
+
+
+-- silver.student
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.tables
+    WHERE name = 'student'
+      AND schema_id = SCHEMA_ID('silver')
+)
 BEGIN
     CREATE TABLE silver.student (
-        student_id VARCHAR(50) NOT NULL,
+        student_id VARCHAR(50) NOT NULL PRIMARY KEY,
         university VARCHAR(100),
         faculty VARCHAR(100),
         department VARCHAR(100),
@@ -335,33 +346,402 @@ BEGIN
         financial_strain_self_report VARCHAR(50),
         preferred_support VARCHAR(100)
     );
-END
-
+END;
 GO
+
+-- Reload Silver from Bronze
+TRUNCATE TABLE silver.student;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
+        LTRIM(RTRIM(university)) AS university,
+        LTRIM(RTRIM(faculty)) AS faculty,
+        LTRIM(RTRIM(department)) AS department,
+        TRY_CAST(age AS INT) AS age,
+        LTRIM(RTRIM(gender)) AS gender,
+        LTRIM(RTRIM(residency)) AS residency,
+        TRY_CAST(entry_year AS INT) AS entry_year,
+        LTRIM(RTRIM(current_level)) AS current_level,
+        LTRIM(RTRIM(enrollment_status)) AS enrollment_status,
+        LTRIM(RTRIM(admission_route)) AS admission_route,
+        TRY_CAST(prior_gpa AS DECIMAL(4,2)) AS prior_gpa,
+        TRY_CAST(prior_failed_courses AS INT)
+            AS prior_failed_courses,
+        TRY_CAST(prior_attendance_pct AS DECIMAL(5,2))
+            AS prior_attendance_pct,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(employment_status)))
+                IN ('part time', 'part-time')
+                THEN 'Part-time'
+            WHEN LOWER(LTRIM(RTRIM(employment_status)))
+                IN ('full time', 'full-time')
+                THEN 'Full-time'
+            WHEN LOWER(LTRIM(RTRIM(employment_status)))
+                = 'not employed'
+                THEN 'Not employed'
+            ELSE LTRIM(RTRIM(employment_status))
+        END AS employment_status,
+
+        TRY_CAST(usual_study_hours_per_week AS DECIMAL(5,2))
+            AS usual_study_hours_per_week,
+        TRY_CAST(sleep_hours_per_night AS DECIMAL(4,2))
+            AS sleep_hours_per_night,
+        TRY_CAST(commute_minutes_one_way AS INT)
+            AS commute_minutes_one_way,
+        LTRIM(RTRIM(internet_access)) AS internet_access,
+        LTRIM(RTRIM(housing_type)) AS housing_type,
+        LTRIM(RTRIM(scholarship_status)) AS scholarship_status,
+        LTRIM(RTRIM(financial_strain_self_report))
+            AS financial_strain_self_report,
+        LTRIM(RTRIM(preferred_support)) AS preferred_support
+    FROM bronze.students
+),
+
+validated AS (
+    SELECT
+        student_id,
+        university,
+        faculty,
+        department,
+
+           CASE
+             WHEN age >= 18 THEN age
+          ELSE NULL
+       END AS age,
+
+        gender,
+        residency,
+
+        CASE
+            WHEN entry_year BETWEEN 2017 AND 2026
+                THEN entry_year
+            ELSE NULL
+        END AS entry_year,
+
+        current_level,
+        enrollment_status,
+        admission_route,
+
+        CASE
+            WHEN prior_gpa BETWEEN 0 AND 4
+                THEN prior_gpa
+            ELSE NULL
+        END AS prior_gpa,
+
+        CASE
+            WHEN prior_failed_courses >= 0
+                THEN prior_failed_courses
+            ELSE NULL
+        END AS prior_failed_courses,
+
+        CASE
+            WHEN prior_attendance_pct BETWEEN 0 AND 100
+                THEN prior_attendance_pct
+            ELSE NULL
+        END AS prior_attendance_pct,
+
+        employment_status,
+
+        CASE
+            WHEN usual_study_hours_per_week >= 0
+                THEN usual_study_hours_per_week
+            ELSE NULL
+        END AS usual_study_hours_per_week,
+
+        CASE
+            WHEN sleep_hours_per_night BETWEEN 0 AND 24
+                THEN sleep_hours_per_night
+            ELSE NULL
+        END AS sleep_hours_per_night,
+
+        CASE
+            WHEN commute_minutes_one_way >= 0
+                THEN commute_minutes_one_way
+            ELSE NULL
+        END AS commute_minutes_one_way,
+
+        internet_access,
+        housing_type,
+        scholarship_status,
+        financial_strain_self_report,
+        preferred_support
+
+    FROM cleaned
+    WHERE student_id IS NOT NULL
+),
+
+-- Remove exact duplicate records
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                student_id,
+                university,
+                faculty,
+                department,
+                age,
+                gender,
+                residency,
+                entry_year,
+                current_level,
+                enrollment_status,
+                admission_route,
+                prior_gpa,
+                prior_failed_courses,
+                prior_attendance_pct,
+                employment_status,
+                usual_study_hours_per_week,
+                sleep_hours_per_night,
+                commute_minutes_one_way,
+                internet_access,
+                housing_type,
+                scholarship_status,
+                financial_strain_self_report,
+                preferred_support
+            ORDER BY student_id
+        ) AS rn
+    FROM validated
+),
+
+-- Keep one copy of each exact record
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+-- Count distinct records for each student ID
+student_counts AS (
+    SELECT
+        student_id,
+        COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY student_id
+),
+
+-- Keep only IDs with one distinct record
+unique_students AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN student_counts AS s
+        ON d.student_id = s.student_id
+    WHERE s.record_count = 1
+)
+
+INSERT INTO silver.student (
+    student_id,
+    university,
+    faculty,
+    department,
+    age,
+    gender,
+    residency,
+    entry_year,
+    current_level,
+    enrollment_status,
+    admission_route,
+    prior_gpa,
+    prior_failed_courses,
+    prior_attendance_pct,
+    employment_status,
+    usual_study_hours_per_week,
+    sleep_hours_per_night,
+    commute_minutes_one_way,
+    internet_access,
+    housing_type,
+    scholarship_status,
+    financial_strain_self_report,
+    preferred_support
+)
+SELECT
+    student_id,
+    university,
+    faculty,
+    department,
+    age,
+    gender,
+    residency,
+    entry_year,
+    current_level,
+    enrollment_status,
+    admission_route,
+    prior_gpa,
+    prior_failed_courses,
+    prior_attendance_pct,
+    employment_status,
+    usual_study_hours_per_week,
+    sleep_hours_per_night,
+    commute_minutes_one_way,
+    internet_access,
+    housing_type,
+    scholarship_status,
+    financial_strain_self_report,
+    preferred_support
+FROM unique_students;
+GO
+
+
+
+-- silver.assessment
+
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'assessment' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.assessment (
-        assessment_id VARCHAR(50) NOT NULL,
+        assessment_id VARCHAR(50) NOT NULL PRIMARY KEY,
         enrollment_id VARCHAR(50),
         assessment_name VARCHAR(150),
         assessment_type VARCHAR(50),
         week_due INT,
         due_date DATE,
         weight DECIMAL(5,2),
-        max_score DECIMAL(6,2),
-        score DECIMAL(6,2),
+        max_score DECIMAL(7,2),
+        score DECIMAL(7,2),
         submission_status VARCHAR(50),
         late_submission BIT
     );
 END
-
 GO
+
+
+
+TRUNCATE TABLE silver.assessment;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(assessment_id)), '') AS assessment_id,
+        NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
+        NULLIF(LTRIM(RTRIM(assessment_name)), '') AS assessment_name,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(assessment_type))) = 'quiz'
+                THEN 'Quiz'
+            WHEN LOWER(LTRIM(RTRIM(assessment_type))) = 'assignment'
+                THEN 'Assignment'
+            WHEN LOWER(LTRIM(RTRIM(assessment_type))) = 'exam'
+                THEN 'Exam'
+            WHEN LOWER(LTRIM(RTRIM(assessment_type))) = 'project'
+                THEN 'Project'
+            ELSE NULLIF(LTRIM(RTRIM(assessment_type)), '')
+        END AS assessment_type,
+
+        TRY_CAST(week_due AS INT) AS week_due,
+
+        COALESCE(
+            TRY_CONVERT(DATE, NULLIF(LTRIM(RTRIM(due_date)), ''), 23),
+            TRY_CONVERT(DATE, NULLIF(LTRIM(RTRIM(due_date)), ''), 103)
+        ) AS due_date,
+
+        TRY_CAST(weight AS DECIMAL(5,2)) AS weight,
+        TRY_CAST(max_score AS DECIMAL(7,2)) AS max_score,
+        TRY_CAST(NULLIF(LTRIM(RTRIM(score)), '') AS DECIMAL(7,2)) AS score,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(submission_status))) = 'missing'
+                THEN 'Missing'
+            WHEN LOWER(LTRIM(RTRIM(submission_status))) = 'submitted'
+                THEN 'Submitted'
+            ELSE NULLIF(LTRIM(RTRIM(submission_status)), '')
+        END AS submission_status,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(late_submission))) IN ('true', '1', 'yes')
+                THEN CAST(1 AS BIT)
+            WHEN LOWER(LTRIM(RTRIM(late_submission))) IN ('false', '0', 'no')
+                THEN CAST(0 AS BIT)
+            ELSE NULL
+        END AS late_submission
+
+    FROM bronze.assessment
+),
+
+validated AS (
+    SELECT
+        assessment_id,
+        enrollment_id,
+        assessment_name,
+        assessment_type,
+
+        CASE
+            WHEN week_due BETWEEN 1 AND 52 THEN week_due
+            ELSE NULL
+        END AS week_due,
+
+        due_date,
+
+        CASE
+            WHEN weight BETWEEN 0 AND 1 THEN weight
+            ELSE NULL
+        END AS weight,
+
+        CASE
+            WHEN max_score > 0 THEN max_score
+            ELSE NULL
+        END AS max_score,
+
+        CASE
+            WHEN score >= 0 AND score <= max_score THEN score
+            ELSE NULL
+        END AS score,
+
+        submission_status,
+        late_submission
+    FROM cleaned
+    WHERE assessment_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                assessment_id, enrollment_id, assessment_name,
+                assessment_type, week_due, due_date, weight,
+                max_score, score, submission_status, late_submission
+            ORDER BY assessment_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+assessment_counts AS (
+    SELECT assessment_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY assessment_id
+),
+
+unique_assessments AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN assessment_counts AS c
+        ON d.assessment_id = c.assessment_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.assessment (
+    assessment_id, enrollment_id, assessment_name, assessment_type,
+    week_due, due_date, weight, max_score, score,
+    submission_status, late_submission
+)
+SELECT
+    assessment_id, enrollment_id, assessment_name, assessment_type,
+    week_due, due_date, weight, max_score, score,
+    submission_status, late_submission
+FROM unique_assessments;
+GO
+
+--=======silver.attendance=============
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'attendance' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.attendance (
-        attendance_record_id VARCHAR(50) NOT NULL,
+        attendance_record_id VARCHAR(50) NOT NULL PRIMARY KEY,
         enrollment_id VARCHAR(50),
         student_id VARCHAR(50),
         course_id VARCHAR(50),
@@ -371,39 +751,340 @@ BEGIN
         attendance_status VARCHAR(50)
     );
 END
-
 GO
+
+TRUNCATE TABLE silver.attendance;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(attendance_record_id)), '') AS attendance_record_id,
+        NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
+        NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
+        NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
+        TRY_CAST(week AS INT) AS week,
+        TRY_CAST(session_number AS INT) AS session_number,
+
+        COALESCE(
+            TRY_CONVERT(DATE, NULLIF(LTRIM(RTRIM(class_date)), ''), 23),
+            TRY_CONVERT(DATE, NULLIF(LTRIM(RTRIM(class_date)), ''), 103)
+        ) AS class_date,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(attendance_status))) = 'present'
+                THEN 'Present'
+            WHEN LOWER(LTRIM(RTRIM(attendance_status))) = 'absent'
+                THEN 'Absent'
+            ELSE NULLIF(LTRIM(RTRIM(attendance_status)), '')
+        END AS attendance_status
+
+    FROM bronze.attendance
+),
+
+validated AS (
+    SELECT
+        attendance_record_id,
+        enrollment_id,
+        student_id,
+        course_id,
+
+        CASE
+            WHEN week BETWEEN 1 AND 12 THEN week
+            ELSE NULL
+        END AS week,
+
+        CASE
+            WHEN session_number BETWEEN 1 AND 2 THEN session_number
+            ELSE NULL
+        END AS session_number,
+
+        class_date,
+        attendance_status
+    FROM cleaned
+    WHERE attendance_record_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                attendance_record_id, enrollment_id, student_id,
+                course_id, week, session_number, class_date,
+                attendance_status
+            ORDER BY attendance_record_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+attendance_counts AS (
+    SELECT attendance_record_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY attendance_record_id
+),
+
+unique_attendance AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN attendance_counts AS c
+        ON d.attendance_record_id = c.attendance_record_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.attendance (
+    attendance_record_id, enrollment_id, student_id, course_id,
+    week, session_number, class_date, attendance_status
+)
+SELECT
+    attendance_record_id, enrollment_id, student_id, course_id,
+    week, session_number, class_date, attendance_status
+FROM unique_attendance;
+GO
+
+
+
+
+
+
+
+-- silver.course
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'course' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.course (
-        course_id VARCHAR(50) NOT NULL,
+        course_id VARCHAR(50) NOT NULL PRIMARY KEY,
         department VARCHAR(100),
         course_name VARCHAR(150),
         course_type VARCHAR(50),
         credit_hours INT,
-        difficulty_level VARCHAR(50),
+        difficulty_level INT,
         delivery_mode VARCHAR(50)
     );
 END
-
 GO
+-- silver.course
+
+TRUNCATE TABLE silver.course;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
+        NULLIF(LTRIM(RTRIM(department)), '') AS department,
+        NULLIF(LTRIM(RTRIM(course_name)), '') AS course_name,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(course_type))) = 'core'
+                THEN 'Core'
+            WHEN LOWER(LTRIM(RTRIM(course_type))) = 'elective'
+                THEN 'Elective'
+            WHEN LOWER(LTRIM(RTRIM(course_type))) = 'practical'
+                THEN 'Practical'
+            ELSE NULLIF(LTRIM(RTRIM(course_type)), '')
+        END AS course_type,
+
+        TRY_CAST(credit_hours AS INT) AS credit_hours,
+        TRY_CAST(difficulty_level AS INT) AS difficulty_level,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(delivery_mode))) = 'in-person'
+                THEN 'In-person'
+            WHEN LOWER(LTRIM(RTRIM(delivery_mode))) = 'online'
+                THEN 'Online'
+            WHEN LOWER(LTRIM(RTRIM(delivery_mode))) = 'hybrid'
+                THEN 'Hybrid'
+            ELSE NULLIF(LTRIM(RTRIM(delivery_mode)), '')
+        END AS delivery_mode
+
+    FROM bronze.course
+),
+
+validated AS (
+    SELECT
+        course_id,
+        department,
+        course_name,
+        course_type,
+
+        CASE
+            WHEN credit_hours BETWEEN 1 AND 6
+                THEN credit_hours
+            ELSE NULL
+        END AS credit_hours,
+
+        CASE
+            WHEN difficulty_level BETWEEN 1 AND 5
+                THEN difficulty_level
+            ELSE NULL
+        END AS difficulty_level,
+
+        delivery_mode
+    FROM cleaned
+    WHERE course_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                course_id, department, course_name, course_type,
+                credit_hours, difficulty_level, delivery_mode
+            ORDER BY course_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+course_counts AS (
+    SELECT course_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY course_id
+),
+
+unique_courses AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN course_counts AS c
+        ON d.course_id = c.course_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.course (
+    course_id, department, course_name, course_type,
+    credit_hours, difficulty_level, delivery_mode
+)
+SELECT
+    course_id, department, course_name, course_type,
+    credit_hours, difficulty_level, delivery_mode
+FROM unique_courses;
+GO
+
+
+
+
+
+
+
+-- silver.enrollment
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'enrollment' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.enrollment (
-        enrollment_id VARCHAR(50) NOT NULL,
+        enrollment_id VARCHAR(50) NOT NULL PRIMARY KEY,
         student_id VARCHAR(50),
         course_id VARCHAR(50),
         term_id VARCHAR(50),
-        level_at_enrollment VARCHAR(50),
+        level_at_enrollment INT,
         credit_hours INT,
         registration_date DATE,
         withdrawn BIT
     );
 END
-
 GO
+
+TRUNCATE TABLE silver.enrollment;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
+        NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
+        NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
+        NULLIF(LTRIM(RTRIM(term_id)), '') AS term_id,
+        TRY_CAST(level_at_enrollment AS INT) AS level_at_enrollment,
+        TRY_CAST(credit_hours AS INT) AS credit_hours,
+
+        COALESCE(
+            TRY_CONVERT(DATE, NULLIF(LTRIM(RTRIM(registration_date)), ''), 23),
+            TRY_CONVERT(DATE, NULLIF(LTRIM(RTRIM(registration_date)), ''), 103)
+        ) AS registration_date,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(withdrawn))) IN ('true', '1', 'yes')
+                THEN CAST(1 AS BIT)
+            WHEN LOWER(LTRIM(RTRIM(withdrawn))) IN ('false', '0', 'no')
+                THEN CAST(0 AS BIT)
+            ELSE NULL
+        END AS withdrawn
+
+    FROM bronze.enrollment
+),
+
+validated AS (
+    SELECT
+        enrollment_id,
+        student_id,
+        course_id,
+        term_id,
+
+        CASE
+            WHEN level_at_enrollment BETWEEN 1 AND 4
+                THEN level_at_enrollment
+            ELSE NULL
+        END AS level_at_enrollment,
+
+        CASE
+            WHEN credit_hours BETWEEN 1 AND 6
+                THEN credit_hours
+            ELSE NULL
+        END AS credit_hours,
+
+        registration_date,
+        withdrawn
+    FROM cleaned
+    WHERE enrollment_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                enrollment_id, student_id, course_id, term_id,
+                level_at_enrollment, credit_hours,
+                registration_date, withdrawn
+            ORDER BY enrollment_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+enrollment_counts AS (
+    SELECT enrollment_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY enrollment_id
+),
+
+unique_enrollments AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN enrollment_counts AS c
+        ON d.enrollment_id = c.enrollment_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.enrollment (
+    enrollment_id, student_id, course_id, term_id,
+    level_at_enrollment, credit_hours, registration_date, withdrawn
+)
+SELECT
+    enrollment_id, student_id, course_id, term_id,
+    level_at_enrollment, credit_hours, registration_date, withdrawn
+FROM unique_enrollments;
+GO
+
+-- silver.FinalResults
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FinalResults' AND schema_id = schema_id('silver'))
 BEGIN
@@ -419,13 +1100,148 @@ BEGIN
         outcome_available_date DATE
     );
 END
+GO
+-- silver.final_result
 
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'final_result' AND schema_id = schema_id('silver'))
+BEGIN
+    CREATE TABLE silver.final_result (
+        enrollment_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        student_id VARCHAR(50),
+        course_id VARCHAR(50),
+        term_id VARCHAR(50),
+        final_score DECIMAL(5,2),
+        passed BIT,
+        final_grade_band VARCHAR(10),
+        at_risk_final_outcome BIT,
+        outcome_available_date DATE
+    );
+END
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'LmsActivity' AND schema_id = schema_id('silver'))
+TRUNCATE TABLE silver.final_result;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
+        NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
+        NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
+        NULLIF(LTRIM(RTRIM(term_id)), '') AS term_id,
+        TRY_CAST(final_score AS DECIMAL(5,2)) AS final_score,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(passed))) IN ('true', '1', 'yes')
+                THEN CAST(1 AS BIT)
+            WHEN LOWER(LTRIM(RTRIM(passed))) IN ('false', '0', 'no')
+                THEN CAST(0 AS BIT)
+            ELSE NULL
+        END AS passed,
+
+        UPPER(NULLIF(LTRIM(RTRIM(final_grade_band)), ''))
+            AS final_grade_band,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(at_risk_final_outcome)))
+                    IN ('true', '1', 'yes')
+                THEN CAST(1 AS BIT)
+            WHEN LOWER(LTRIM(RTRIM(at_risk_final_outcome)))
+                    IN ('false', '0', 'no')
+                THEN CAST(0 AS BIT)
+            ELSE NULL
+        END AS at_risk_final_outcome,
+
+        COALESCE(
+            TRY_CONVERT(
+                DATE,
+                NULLIF(LTRIM(RTRIM(outcome_available_date)), ''),
+                23
+            ),
+            TRY_CONVERT(
+                DATE,
+                NULLIF(LTRIM(RTRIM(outcome_available_date)), ''),
+                103
+            )
+        ) AS outcome_available_date
+
+    FROM bronze.final_results
+),
+
+validated AS (
+    SELECT
+        enrollment_id,
+        student_id,
+        course_id,
+        term_id,
+
+        CASE
+            WHEN final_score BETWEEN 0 AND 100 THEN final_score
+            ELSE NULL
+        END AS final_score,
+
+        passed,
+
+        CASE
+            WHEN final_grade_band IN ('A', 'B', 'C', 'D', 'F')
+                THEN final_grade_band
+            ELSE NULL
+        END AS final_grade_band,
+
+        at_risk_final_outcome,
+        outcome_available_date
+    FROM cleaned
+    WHERE enrollment_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                enrollment_id, student_id, course_id, term_id,
+                final_score, passed, final_grade_band,
+                at_risk_final_outcome, outcome_available_date
+            ORDER BY enrollment_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+result_counts AS (
+    SELECT enrollment_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY enrollment_id
+),
+
+unique_results AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN result_counts AS c
+        ON d.enrollment_id = c.enrollment_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.final_result (
+    enrollment_id, student_id, course_id, term_id,
+    final_score, passed, final_grade_band,
+    at_risk_final_outcome, outcome_available_date
+)
+SELECT
+    enrollment_id, student_id, course_id, term_id,
+    final_score, passed, final_grade_band,
+    at_risk_final_outcome, outcome_available_date
+FROM unique_results;
+GO
+
+-- silver.LmsActivity
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'lms_activity' AND schema_id = schema_id('silver'))
 BEGIN
-    CREATE TABLE silver.LmsActivity (
-        lms_activity_id VARCHAR(50) NOT NULL,
+    CREATE TABLE silver.lms_activity (
+        lms_record_id VARCHAR(50) NOT NULL PRIMARY KEY,
         student_id VARCHAR(50),
         enrollment_id VARCHAR(50),
         course_id VARCHAR(50),
@@ -437,13 +1253,119 @@ BEGIN
         last_activity_days_ago INT
     );
 END
-
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StudentSupport' AND schema_id = schema_id('silver'))
+TRUNCATE TABLE silver.lms_activity;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(lms_activity_id)), '') AS lms_record_id,
+        NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
+        NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
+        NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
+        TRY_CAST(week AS INT) AS week,
+        TRY_CAST(login_count AS INT) AS login_count,
+        TRY_CAST(resource_views AS INT) AS resource_views,
+        TRY_CAST(forum_posts AS INT) AS forum_posts,
+        TRY_CAST(NULLIF(LTRIM(RTRIM(video_minutes)), '') AS DECIMAL(8,2))
+            AS video_minutes,
+        TRY_CAST(last_activity_days_ago AS INT) AS last_activity_days_ago
+
+    FROM bronze.lms_activity
+),
+
+validated AS (
+    SELECT
+        lms_record_id,
+        student_id,
+        enrollment_id,
+        course_id,
+
+        CASE
+            WHEN week BETWEEN 1 AND 12 THEN week
+            ELSE NULL
+        END AS week,
+
+        CASE
+            WHEN login_count >= 0 THEN login_count
+            ELSE NULL
+        END AS login_count,
+
+        CASE
+            WHEN resource_views >= 0 THEN resource_views
+            ELSE NULL
+        END AS resource_views,
+
+        CASE
+            WHEN forum_posts >= 0 THEN forum_posts
+            ELSE NULL
+        END AS forum_posts,
+
+        CASE
+            WHEN video_minutes >= 0 THEN video_minutes
+            ELSE NULL
+        END AS video_minutes,
+
+        CASE
+            WHEN last_activity_days_ago >= 0
+                THEN last_activity_days_ago
+            ELSE NULL
+        END AS last_activity_days_ago
+
+    FROM cleaned
+    WHERE lms_record_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                lms_record_id, student_id, enrollment_id, course_id,
+                week, login_count, resource_views, forum_posts,
+                video_minutes, last_activity_days_ago
+            ORDER BY lms_record_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+lms_counts AS (
+    SELECT lms_record_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY lms_record_id
+),
+
+unique_lms AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN lms_counts AS c
+        ON d.lms_record_id = c.lms_record_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.lms_activity (
+    lms_record_id, student_id, enrollment_id, course_id, week,
+    login_count, resource_views, forum_posts, video_minutes,
+    last_activity_days_ago
+)
+SELECT
+    lms_record_id, student_id, enrollment_id, course_id, week,
+    login_count, resource_views, forum_posts, video_minutes,
+    last_activity_days_ago
+FROM unique_lms;
+GO
+
+-- silver.StudentSupport
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'student_support' AND schema_id = schema_id('silver'))
 BEGIN
-    CREATE TABLE silver.StudentSupport (
-        support_event_id VARCHAR(50) NOT NULL,
+    CREATE TABLE silver.student_support (
+        support_event_id VARCHAR(50) NOT NULL PRIMARY KEY,
         student_id VARCHAR(50),
         enrollment_id VARCHAR(50),
         support_type VARCHAR(100),
@@ -452,13 +1374,122 @@ BEGIN
         follow_up_completed BIT
     );
 END
-
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WeeklySnapshots' AND schema_id = schema_id('silver'))
+TRUNCATE TABLE silver.student_support;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(support_event_id)), '') AS support_event_id,
+        NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
+        NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(support_type))) = 'advising'
+                THEN 'Advising'
+            WHEN LOWER(LTRIM(RTRIM(support_type))) = 'tutoring'
+                THEN 'Tutoring'
+            WHEN LOWER(LTRIM(RTRIM(support_type))) = 'peer study group'
+                THEN 'Peer study group'
+            ELSE NULLIF(LTRIM(RTRIM(support_type)), '')
+        END AS support_type,
+
+        TRY_CONVERT(
+            INT,
+            TRY_CONVERT(
+                DECIMAL(5,2),
+                NULLIF(LTRIM(RTRIM(event_week)), '')
+            )
+        ) AS event_week,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(participated))) IN ('true', '1', 'yes')
+                THEN CAST(1 AS BIT)
+            WHEN LOWER(LTRIM(RTRIM(participated))) IN ('false', '0', 'no')
+                THEN CAST(0 AS BIT)
+            ELSE NULL
+        END AS participated,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(follow_up_completed)))
+                    IN ('true', '1', 'yes')
+                THEN CAST(1 AS BIT)
+            WHEN LOWER(LTRIM(RTRIM(follow_up_completed)))
+                    IN ('false', '0', 'no')
+                THEN CAST(0 AS BIT)
+            ELSE NULL
+        END AS follow_up_completed
+
+    FROM bronze.student_support
+),
+
+validated AS (
+    SELECT
+        support_event_id,
+        student_id,
+        enrollment_id,
+        support_type,
+
+        CASE
+            WHEN event_week BETWEEN 1 AND 12 THEN event_week
+            ELSE NULL
+        END AS event_week,
+
+        participated,
+        follow_up_completed
+    FROM cleaned
+    WHERE support_event_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                support_event_id, student_id, enrollment_id,
+                support_type, event_week, participated,
+                follow_up_completed
+            ORDER BY support_event_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+support_counts AS (
+    SELECT support_event_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY support_event_id
+),
+
+unique_support AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN support_counts AS c
+        ON d.support_event_id = c.support_event_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.student_support (
+    support_event_id, student_id, enrollment_id, support_type,
+    event_week, participated, follow_up_completed
+)
+SELECT
+    support_event_id, student_id, enrollment_id, support_type,
+    event_week, participated, follow_up_completed
+FROM unique_support;
+GO
+
+
+-- silver.WeeklySnapshots
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'weekly_snapshot' AND schema_id = schema_id('silver'))
 BEGIN
-    CREATE TABLE silver.WeeklySnapshots (
-        snapshot_id VARCHAR(50) NOT NULL,
+    CREATE TABLE silver.weekly_snapshot (
+        snapshot_id VARCHAR(50) NOT NULL PRIMARY KEY,
         enrollment_id VARCHAR(50),
         student_id VARCHAR(50),
         course_id VARCHAR(50),
@@ -472,7 +1503,7 @@ BEGIN
         assignments_due_to_date INT,
         assignments_submitted_to_date INT,
         late_submissions_to_date INT,
-        assessment_average_available_to_date DECIMAL(6,2),
+        assessment_average_available_to_date DECIMAL(5,2),
         prior_gpa DECIMAL(4,2),
         prior_failed_courses INT,
         usual_study_hours_per_week DECIMAL(5,2),
@@ -483,6 +1514,278 @@ BEGIN
         financial_strain_self_report VARCHAR(50)
     );
 END
-
 GO
 
+TRUNCATE TABLE silver.weekly_snapshot;
+
+;WITH cleaned AS (
+    SELECT
+        NULLIF(LTRIM(RTRIM(snapshot_id)), '') AS snapshot_id,
+        NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
+        NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
+        NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
+        NULLIF(LTRIM(RTRIM(term_id)), '') AS term_id,
+        TRY_CAST(snapshot_week AS INT) AS snapshot_week,
+
+        COALESCE(
+            TRY_CONVERT(
+                DATE,
+                NULLIF(LTRIM(RTRIM(snapshot_date)), ''),
+                23
+            ),
+            TRY_CONVERT(
+                DATE,
+                NULLIF(LTRIM(RTRIM(snapshot_date)), ''),
+                103
+            )
+        ) AS snapshot_date,
+
+        TRY_CAST(attendance_pct_to_date AS DECIMAL(5,2))
+            AS attendance_pct_to_date,
+
+        TRY_CAST(absences_to_date AS INT)
+            AS absences_to_date,
+
+        TRY_CAST(lms_events_this_week AS INT)
+            AS lms_events_this_week,
+
+        TRY_CAST(lms_events_rolling_3_weeks AS INT)
+            AS lms_events_rolling_3_weeks,
+
+        TRY_CAST(assignments_due_to_date AS INT)
+            AS assignments_due_to_date,
+
+        TRY_CAST(assignments_submitted_to_date AS INT)
+            AS assignments_submitted_to_date,
+
+        TRY_CAST(late_submissions_to_date AS INT)
+            AS late_submissions_to_date,
+
+        TRY_CAST(
+            NULLIF(
+                LTRIM(RTRIM(assessment_average_available_to_date)),
+                ''
+            ) AS DECIMAL(5,2)
+        ) AS assessment_average_available_to_date,
+
+        TRY_CAST(prior_gpa AS DECIMAL(4,2))
+            AS prior_gpa,
+
+        TRY_CAST(prior_failed_courses AS INT)
+            AS prior_failed_courses,
+
+        TRY_CAST(usual_study_hours_per_week AS DECIMAL(5,2))
+            AS usual_study_hours_per_week,
+
+        TRY_CAST(sleep_hours_per_night AS DECIMAL(4,2))
+            AS sleep_hours_per_night,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(employment_status)))
+                    IN ('part-time', 'part time')
+                THEN 'Part-time'
+            WHEN LOWER(LTRIM(RTRIM(employment_status)))
+                    IN ('full-time', 'full time')
+                THEN 'Full-time'
+            WHEN LOWER(LTRIM(RTRIM(employment_status))) = 'not employed'
+                THEN 'Not employed'
+            ELSE NULLIF(LTRIM(RTRIM(employment_status)), '')
+        END AS employment_status,
+
+        TRY_CAST(commute_minutes_one_way AS INT)
+            AS commute_minutes_one_way,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(internet_access))) = 'reliable'
+                THEN 'Reliable'
+            WHEN LOWER(LTRIM(RTRIM(internet_access))) = 'limited'
+                THEN 'Limited'
+            WHEN LOWER(LTRIM(RTRIM(internet_access)))
+                    = 'sometimes unreliable'
+                THEN 'Sometimes unreliable'
+            ELSE NULLIF(LTRIM(RTRIM(internet_access)), '')
+        END AS internet_access,
+
+        CASE
+            WHEN LOWER(LTRIM(RTRIM(financial_strain_self_report))) = 'low'
+                THEN 'Low'
+            WHEN LOWER(LTRIM(RTRIM(financial_strain_self_report))) = 'moderate'
+                THEN 'Moderate'
+            WHEN LOWER(LTRIM(RTRIM(financial_strain_self_report))) = 'high'
+                THEN 'High'
+            ELSE NULLIF(LTRIM(RTRIM(financial_strain_self_report)), '')
+        END AS financial_strain_self_report
+
+    FROM bronze.weekly_snapshots
+),
+
+validated AS (
+    SELECT
+        snapshot_id,
+        enrollment_id,
+        student_id,
+        course_id,
+        term_id,
+
+        CASE
+            WHEN snapshot_week BETWEEN 1 AND 12
+                THEN snapshot_week
+            ELSE NULL
+        END AS snapshot_week,
+
+        snapshot_date,
+
+        CASE
+            WHEN attendance_pct_to_date BETWEEN 0 AND 100
+                THEN attendance_pct_to_date
+            ELSE NULL
+        END AS attendance_pct_to_date,
+
+        CASE
+            WHEN absences_to_date >= 0
+                THEN absences_to_date
+            ELSE NULL
+        END AS absences_to_date,
+
+        CASE
+            WHEN lms_events_this_week >= 0
+                THEN lms_events_this_week
+            ELSE NULL
+        END AS lms_events_this_week,
+
+        CASE
+            WHEN lms_events_rolling_3_weeks >= 0
+                THEN lms_events_rolling_3_weeks
+            ELSE NULL
+        END AS lms_events_rolling_3_weeks,
+
+        CASE
+            WHEN assignments_due_to_date >= 0
+                THEN assignments_due_to_date
+            ELSE NULL
+        END AS assignments_due_to_date,
+
+        CASE
+            WHEN assignments_submitted_to_date >= 0
+                 AND assignments_submitted_to_date <= assignments_due_to_date
+                THEN assignments_submitted_to_date
+            ELSE NULL
+        END AS assignments_submitted_to_date,
+
+        CASE
+            WHEN late_submissions_to_date >= 0
+                 AND late_submissions_to_date <= assignments_submitted_to_date
+                THEN late_submissions_to_date
+            ELSE NULL
+        END AS late_submissions_to_date,
+
+        CASE
+            WHEN assessment_average_available_to_date BETWEEN 0 AND 100
+                THEN assessment_average_available_to_date
+            ELSE NULL
+        END AS assessment_average_available_to_date,
+
+        CASE
+            WHEN prior_gpa BETWEEN 0 AND 4
+                THEN prior_gpa
+            ELSE NULL
+        END AS prior_gpa,
+
+        CASE
+            WHEN prior_failed_courses >= 0
+                THEN prior_failed_courses
+            ELSE NULL
+        END AS prior_failed_courses,
+
+        CASE
+            WHEN usual_study_hours_per_week >= 0
+                THEN usual_study_hours_per_week
+            ELSE NULL
+        END AS usual_study_hours_per_week,
+
+        CASE
+            WHEN sleep_hours_per_night BETWEEN 0 AND 24
+                THEN sleep_hours_per_night
+            ELSE NULL
+        END AS sleep_hours_per_night,
+
+        employment_status,
+
+        CASE
+            WHEN commute_minutes_one_way >= 0
+                THEN commute_minutes_one_way
+            ELSE NULL
+        END AS commute_minutes_one_way,
+
+        internet_access,
+        financial_strain_self_report
+
+    FROM cleaned
+    WHERE snapshot_id IS NOT NULL
+),
+
+ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                snapshot_id, enrollment_id, student_id, course_id,
+                term_id, snapshot_week, snapshot_date,
+                attendance_pct_to_date, absences_to_date,
+                lms_events_this_week, lms_events_rolling_3_weeks,
+                assignments_due_to_date, assignments_submitted_to_date,
+                late_submissions_to_date,
+                assessment_average_available_to_date,
+                prior_gpa, prior_failed_courses,
+                usual_study_hours_per_week, sleep_hours_per_night,
+                employment_status, commute_minutes_one_way,
+                internet_access, financial_strain_self_report
+            ORDER BY snapshot_id
+        ) AS rn
+    FROM validated
+),
+
+deduplicated AS (
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+),
+
+snapshot_counts AS (
+    SELECT snapshot_id, COUNT(*) AS record_count
+    FROM deduplicated
+    GROUP BY snapshot_id
+),
+
+unique_snapshots AS (
+    SELECT d.*
+    FROM deduplicated AS d
+    INNER JOIN snapshot_counts AS c
+        ON d.snapshot_id = c.snapshot_id
+    WHERE c.record_count = 1
+)
+
+INSERT INTO silver.weekly_snapshot (
+    snapshot_id, enrollment_id, student_id, course_id, term_id,
+    snapshot_week, snapshot_date, attendance_pct_to_date,
+    absences_to_date, lms_events_this_week,
+    lms_events_rolling_3_weeks, assignments_due_to_date,
+    assignments_submitted_to_date, late_submissions_to_date,
+    assessment_average_available_to_date, prior_gpa,
+    prior_failed_courses, usual_study_hours_per_week,
+    sleep_hours_per_night, employment_status,
+    commute_minutes_one_way, internet_access,
+    financial_strain_self_report
+)
+SELECT
+    snapshot_id, enrollment_id, student_id, course_id, term_id,
+    snapshot_week, snapshot_date, attendance_pct_to_date,
+    absences_to_date, lms_events_this_week,
+    lms_events_rolling_3_weeks, assignments_due_to_date,
+    assignments_submitted_to_date, late_submissions_to_date,
+    assessment_average_available_to_date, prior_gpa,
+    prior_failed_courses, usual_study_hours_per_week,
+    sleep_hours_per_night, employment_status,
+    commute_minutes_one_way, internet_access,
+    financial_strain_self_report
+FROM unique_snapshots;
+GO
