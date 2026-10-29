@@ -103,7 +103,6 @@ BEGIN
     enrollment_id VARCHAR(255),
     student_id VARCHAR(255),
     course_id VARCHAR(255),
-    term_id VARCHAR(255),
     level_at_enrollment VARCHAR(255),
     credit_hours VARCHAR(255),
     registration_date VARCHAR(255),
@@ -118,7 +117,6 @@ BEGIN
     enrollment_id VARCHAR(255),
     student_id VARCHAR(255),
     course_id VARCHAR(255),
-    term_id VARCHAR(255),
     final_score VARCHAR(255),
     passed VARCHAR(255),
     final_grade_band VARCHAR(255),
@@ -166,7 +164,6 @@ BEGIN
     enrollment_id VARCHAR(255),
     student_id VARCHAR(255),
     course_id VARCHAR(255),
-    term_id VARCHAR(255),
     snapshot_week VARCHAR(255),
     snapshot_date VARCHAR(255),
     attendance_pct_to_date VARCHAR(255),
@@ -322,7 +319,7 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE TABLE silver.student (
-        student_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        student_id VARCHAR(50) UNIQUE,
         university VARCHAR(100),
         faculty VARCHAR(100),
         department VARCHAR(100),
@@ -415,7 +412,7 @@ validated AS (
         residency,
 
         CASE
-            WHEN entry_year BETWEEN 2017 AND YEAR(GETDATE())
+            WHEN entry_year BETWEEN 2017 AND 2026
                 THEN entry_year
             ELSE NULL
         END AS entry_year,
@@ -472,6 +469,52 @@ validated AS (
     WHERE student_id IS NOT NULL
 ),
 
+-- Handle NULLs left after validation
+imputed AS (
+    SELECT
+        student_id,
+        university,
+        faculty,
+        department,
+        age,
+        gender,
+        residency,
+        entry_year,
+        current_level,
+        enrollment_status,
+        admission_route,
+
+        -- prior_gpa: fill NULL with department median, fallback to overall median
+        CAST(
+            COALESCE(prior_gpa, dept_median_gpa, overall_median_gpa)
+            AS DECIMAL(4,2)
+        ) AS prior_gpa,
+
+        prior_failed_courses,
+        prior_attendance_pct,
+        employment_status,
+        usual_study_hours_per_week,
+        sleep_hours_per_night,
+        commute_minutes_one_way,
+
+        -- internet_access: fill NULL/empty with 'Unknown'
+        COALESCE(NULLIF(internet_access, ''), 'Unknown') AS internet_access,
+
+        housing_type,
+        scholarship_status,
+        financial_strain_self_report,
+        preferred_support
+    FROM (
+        SELECT
+            v.*,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY v.prior_gpa)
+                OVER (PARTITION BY v.department) AS dept_median_gpa,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY v.prior_gpa)
+                OVER () AS overall_median_gpa
+        FROM validated AS v
+    ) AS x
+),
+
 -- Remove exact duplicate records
 ranked AS (
     SELECT *,
@@ -502,7 +545,7 @@ ranked AS (
                 preferred_support
             ORDER BY student_id
         ) AS rn
-    FROM validated
+    FROM imputed
 ),
 
 -- Keep one copy of each exact record
@@ -510,24 +553,6 @@ deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
--- Count distinct records for each student ID
-student_counts AS (
-    SELECT
-        student_id,
-        COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY student_id
-),
-
--- Keep only IDs with one distinct record
-unique_students AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN student_counts AS s
-        ON d.student_id = s.student_id
-    WHERE s.record_count = 1
 )
 
 INSERT INTO silver.student (
@@ -579,18 +604,16 @@ SELECT
     scholarship_status,
     financial_strain_self_report,
     preferred_support
-FROM unique_students;
+FROM deduplicated;
 GO
-
 
 
 -- silver.assessment
 
-
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'assessment' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.assessment (
-        assessment_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        assessment_id VARCHAR(50) UNIQUE,
         enrollment_id VARCHAR(50),
         assessment_name VARCHAR(150),
         assessment_type VARCHAR(50),
@@ -604,8 +627,6 @@ BEGIN
     );
 END
 GO
-
-
 
 TRUNCATE TABLE silver.assessment;
 
@@ -692,6 +713,57 @@ validated AS (
     WHERE assessment_id IS NOT NULL
 ),
 
+-- Handle NULL scores left after validation
+-- Missing   -> 0
+-- Submitted -> average score ratio of the same assessment_type (fallback: overall), scaled to the row's max_score
+imputed AS (
+    SELECT
+        assessment_id,
+        enrollment_id,
+        assessment_name,
+        assessment_type,
+        week_due,
+        due_date,
+        weight,
+        max_score,
+
+        CAST(
+            CASE
+                WHEN submission_status = 'Missing'
+                    THEN 0
+                WHEN score IS NOT NULL
+                    THEN score
+                WHEN submission_status = 'Submitted'
+                    THEN ROUND(
+                        COALESCE(type_avg_ratio, overall_avg_ratio) * max_score,
+                        2
+                    )
+                ELSE NULL
+            END
+            AS DECIMAL(7,2)
+        ) AS score,
+
+        submission_status,
+        late_submission
+    FROM (
+        SELECT
+            v.*,
+            AVG(CASE
+                    WHEN v.submission_status = 'Submitted'
+                     AND v.score IS NOT NULL
+                     AND v.max_score IS NOT NULL
+                        THEN CAST(v.score AS FLOAT) / CAST(v.max_score AS FLOAT)
+                END) OVER (PARTITION BY v.assessment_type) AS type_avg_ratio,
+            AVG(CASE
+                    WHEN v.submission_status = 'Submitted'
+                     AND v.score IS NOT NULL
+                     AND v.max_score IS NOT NULL
+                        THEN CAST(v.score AS FLOAT) / CAST(v.max_score AS FLOAT)
+                END) OVER () AS overall_avg_ratio
+        FROM validated AS v
+    ) AS x
+),
+
 ranked AS (
     SELECT *,
         ROW_NUMBER() OVER (
@@ -701,27 +773,13 @@ ranked AS (
                 max_score, score, submission_status, late_submission
             ORDER BY assessment_id
         ) AS rn
-    FROM validated
+    FROM imputed
 ),
 
 deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-assessment_counts AS (
-    SELECT assessment_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY assessment_id
-),
-
-unique_assessments AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN assessment_counts AS c
-        ON d.assessment_id = c.assessment_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.assessment (
@@ -733,15 +791,16 @@ SELECT
     assessment_id, enrollment_id, assessment_name, assessment_type,
     week_due, due_date, weight, max_score, score,
     submission_status, late_submission
-FROM unique_assessments;
+FROM deduplicated;
 GO
 
---=======silver.attendance=============
+
+-- silver.attendance
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'attendance' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.attendance (
-        attendance_record_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        attendance_record_id VARCHAR(50) UNIQUE,
         enrollment_id VARCHAR(50),
         student_id VARCHAR(50),
         course_id VARCHAR(50),
@@ -819,20 +878,6 @@ deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-attendance_counts AS (
-    SELECT attendance_record_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY attendance_record_id
-),
-
-unique_attendance AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN attendance_counts AS c
-        ON d.attendance_record_id = c.attendance_record_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.attendance (
@@ -842,13 +887,8 @@ INSERT INTO silver.attendance (
 SELECT
     attendance_record_id, enrollment_id, student_id, course_id,
     week, session_number, class_date, attendance_status
-FROM unique_attendance;
+FROM deduplicated;
 GO
-
-
-
-
-
 
 
 -- silver.course
@@ -856,7 +896,7 @@ GO
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'course' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.course (
-        course_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        course_id VARCHAR(50) UNIQUE,
         department VARCHAR(100),
         course_name VARCHAR(150),
         course_type VARCHAR(50),
@@ -866,7 +906,6 @@ BEGIN
     );
 END
 GO
--- silver.course
 
 TRUNCATE TABLE silver.course;
 
@@ -941,20 +980,6 @@ deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-course_counts AS (
-    SELECT course_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY course_id
-),
-
-unique_courses AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN course_counts AS c
-        ON d.course_id = c.course_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.course (
@@ -964,13 +989,8 @@ INSERT INTO silver.course (
 SELECT
     course_id, department, course_name, course_type,
     credit_hours, difficulty_level, delivery_mode
-FROM unique_courses;
+FROM deduplicated;
 GO
-
-
-
-
-
 
 
 -- silver.enrollment
@@ -978,10 +998,9 @@ GO
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'enrollment' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.enrollment (
-        enrollment_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        enrollment_id VARCHAR(50) UNIQUE,
         student_id VARCHAR(50),
         course_id VARCHAR(50),
-        term_id VARCHAR(50),
         level_at_enrollment INT,
         credit_hours INT,
         registration_date DATE,
@@ -997,7 +1016,6 @@ TRUNCATE TABLE silver.enrollment;
         NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
         NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
         NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
-        NULLIF(LTRIM(RTRIM(term_id)), '') AS term_id,
         TRY_CAST(level_at_enrollment AS INT) AS level_at_enrollment,
         TRY_CAST(credit_hours AS INT) AS credit_hours,
 
@@ -1022,7 +1040,6 @@ validated AS (
         enrollment_id,
         student_id,
         course_id,
-        term_id,
 
         CASE
             WHEN level_at_enrollment BETWEEN 1 AND 4
@@ -1046,7 +1063,7 @@ ranked AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY
-                enrollment_id, student_id, course_id, term_id,
+                enrollment_id, student_id, course_id,
                 level_at_enrollment, credit_hours,
                 registration_date, withdrawn
             ORDER BY enrollment_id
@@ -1058,58 +1075,26 @@ deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-enrollment_counts AS (
-    SELECT enrollment_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY enrollment_id
-),
-
-unique_enrollments AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN enrollment_counts AS c
-        ON d.enrollment_id = c.enrollment_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.enrollment (
-    enrollment_id, student_id, course_id, term_id,
+    enrollment_id, student_id, course_id,
     level_at_enrollment, credit_hours, registration_date, withdrawn
 )
 SELECT
-    enrollment_id, student_id, course_id, term_id,
+    enrollment_id, student_id, course_id,
     level_at_enrollment, credit_hours, registration_date, withdrawn
-FROM unique_enrollments;
+FROM deduplicated;
 GO
 
--- silver.FinalResults
-
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FinalResults' AND schema_id = schema_id('silver'))
-BEGIN
-    CREATE TABLE silver.FinalResults (
-        enrollment_id VARCHAR(50) NOT NULL,
-        student_id VARCHAR(50),
-        course_id VARCHAR(50),
-        term_id VARCHAR(50),
-        final_score DECIMAL(6,2),
-        passed BIT,
-        final_grade_band VARCHAR(10),
-        at_risk_final_outcome VARCHAR(50),
-        outcome_available_date DATE
-    );
-END
-GO
 -- silver.final_result
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'final_result' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.final_result (
-        enrollment_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        enrollment_id VARCHAR(50) UNIQUE,
         student_id VARCHAR(50),
         course_id VARCHAR(50),
-        term_id VARCHAR(50),
         final_score DECIMAL(5,2),
         passed BIT,
         final_grade_band VARCHAR(10),
@@ -1126,7 +1111,6 @@ TRUNCATE TABLE silver.final_result;
         NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
         NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
         NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
-        NULLIF(LTRIM(RTRIM(term_id)), '') AS term_id,
         TRY_CAST(final_score AS DECIMAL(5,2)) AS final_score,
 
         CASE
@@ -1171,7 +1155,6 @@ validated AS (
         enrollment_id,
         student_id,
         course_id,
-        term_id,
 
         CASE
             WHEN final_score BETWEEN 0 AND 100 THEN final_score
@@ -1196,7 +1179,7 @@ ranked AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY
-                enrollment_id, student_id, course_id, term_id,
+                enrollment_id, student_id, course_id,
                 final_score, passed, final_grade_band,
                 at_risk_final_outcome, outcome_available_date
             ORDER BY enrollment_id
@@ -1208,40 +1191,26 @@ deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-result_counts AS (
-    SELECT enrollment_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY enrollment_id
-),
-
-unique_results AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN result_counts AS c
-        ON d.enrollment_id = c.enrollment_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.final_result (
-    enrollment_id, student_id, course_id, term_id,
+    enrollment_id, student_id, course_id,
     final_score, passed, final_grade_band,
     at_risk_final_outcome, outcome_available_date
 )
 SELECT
-    enrollment_id, student_id, course_id, term_id,
+    enrollment_id, student_id, course_id,
     final_score, passed, final_grade_band,
     at_risk_final_outcome, outcome_available_date
-FROM unique_results;
+FROM deduplicated;
 GO
 
--- silver.LmsActivity
+-- silver.lms_activity
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'lms_activity' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.lms_activity (
-        lms_record_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        lms_record_id VARCHAR(50) UNIQUE,
         student_id VARCHAR(50),
         enrollment_id VARCHAR(50),
         course_id VARCHAR(50),
@@ -1316,6 +1285,25 @@ validated AS (
     WHERE lms_record_id IS NOT NULL
 ),
 
+-- Handle NULLs left after validation
+imputed AS (
+    SELECT
+        lms_record_id,
+        student_id,
+        enrollment_id,
+        course_id,
+        week,
+        login_count,
+        resource_views,
+        forum_posts,
+
+        -- video_minutes: fill NULL with 0
+        COALESCE(video_minutes, 0) AS video_minutes,
+
+        last_activity_days_ago
+    FROM validated
+),
+
 ranked AS (
     SELECT *,
         ROW_NUMBER() OVER (
@@ -1325,27 +1313,13 @@ ranked AS (
                 video_minutes, last_activity_days_ago
             ORDER BY lms_record_id
         ) AS rn
-    FROM validated
+    FROM imputed
 ),
 
 deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-lms_counts AS (
-    SELECT lms_record_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY lms_record_id
-),
-
-unique_lms AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN lms_counts AS c
-        ON d.lms_record_id = c.lms_record_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.lms_activity (
@@ -1357,15 +1331,15 @@ SELECT
     lms_record_id, student_id, enrollment_id, course_id, week,
     login_count, resource_views, forum_posts, video_minutes,
     last_activity_days_ago
-FROM unique_lms;
+FROM deduplicated;
 GO
 
--- silver.StudentSupport
+-- silver.student_support
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'student_support' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.student_support (
-        support_event_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        support_event_id VARCHAR(50) UNIQUE,
         student_id VARCHAR(50),
         enrollment_id VARCHAR(50),
         support_type VARCHAR(100),
@@ -1457,20 +1431,6 @@ deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-support_counts AS (
-    SELECT support_event_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY support_event_id
-),
-
-unique_support AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN support_counts AS c
-        ON d.support_event_id = c.support_event_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.student_support (
@@ -1480,20 +1440,18 @@ INSERT INTO silver.student_support (
 SELECT
     support_event_id, student_id, enrollment_id, support_type,
     event_week, participated, follow_up_completed
-FROM unique_support;
+FROM deduplicated;
 GO
 
-
--- silver.WeeklySnapshots
+-- silver.weekly_snapshot
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'weekly_snapshot' AND schema_id = schema_id('silver'))
 BEGIN
     CREATE TABLE silver.weekly_snapshot (
-        snapshot_id VARCHAR(50) NOT NULL PRIMARY KEY,
+        snapshot_id VARCHAR(50) UNIQUE,
         enrollment_id VARCHAR(50),
         student_id VARCHAR(50),
         course_id VARCHAR(50),
-        term_id VARCHAR(50),
         snapshot_week INT,
         snapshot_date DATE,
         attendance_pct_to_date DECIMAL(5,2),
@@ -1524,7 +1482,6 @@ TRUNCATE TABLE silver.weekly_snapshot;
         NULLIF(LTRIM(RTRIM(enrollment_id)), '') AS enrollment_id,
         NULLIF(LTRIM(RTRIM(student_id)), '') AS student_id,
         NULLIF(LTRIM(RTRIM(course_id)), '') AS course_id,
-        NULLIF(LTRIM(RTRIM(term_id)), '') AS term_id,
         TRY_CAST(snapshot_week AS INT) AS snapshot_week,
 
         COALESCE(
@@ -1625,7 +1582,6 @@ validated AS (
         enrollment_id,
         student_id,
         course_id,
-        term_id,
 
         CASE
             WHEN snapshot_week BETWEEN 1 AND 12
@@ -1724,12 +1680,46 @@ validated AS (
     WHERE snapshot_id IS NOT NULL
 ),
 
+-- Handle NULLs left after validation
+imputed AS (
+    SELECT
+        snapshot_id,
+        enrollment_id,
+        student_id,
+        course_id,
+        snapshot_week,
+        snapshot_date,
+        attendance_pct_to_date,
+        absences_to_date,
+        lms_events_this_week,
+        lms_events_rolling_3_weeks,
+        assignments_due_to_date,
+        assignments_submitted_to_date,
+        late_submissions_to_date,
+
+        -- left as NULL on purpose: no graded assessments yet in early weeks
+        assessment_average_available_to_date,
+
+        prior_gpa,
+        prior_failed_courses,
+        usual_study_hours_per_week,
+        sleep_hours_per_night,
+        employment_status,
+        commute_minutes_one_way,
+
+        -- internet_access: fill NULL/empty with 'Unknown'
+        COALESCE(NULLIF(internet_access, ''), 'Unknown') AS internet_access,
+
+        financial_strain_self_report
+    FROM validated
+),
+
 ranked AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY
                 snapshot_id, enrollment_id, student_id, course_id,
-                term_id, snapshot_week, snapshot_date,
+                snapshot_week, snapshot_date,
                 attendance_pct_to_date, absences_to_date,
                 lms_events_this_week, lms_events_rolling_3_weeks,
                 assignments_due_to_date, assignments_submitted_to_date,
@@ -1741,31 +1731,17 @@ ranked AS (
                 internet_access, financial_strain_self_report
             ORDER BY snapshot_id
         ) AS rn
-    FROM validated
+    FROM imputed
 ),
 
 deduplicated AS (
     SELECT *
     FROM ranked
     WHERE rn = 1
-),
-
-snapshot_counts AS (
-    SELECT snapshot_id, COUNT(*) AS record_count
-    FROM deduplicated
-    GROUP BY snapshot_id
-),
-
-unique_snapshots AS (
-    SELECT d.*
-    FROM deduplicated AS d
-    INNER JOIN snapshot_counts AS c
-        ON d.snapshot_id = c.snapshot_id
-    WHERE c.record_count = 1
 )
 
 INSERT INTO silver.weekly_snapshot (
-    snapshot_id, enrollment_id, student_id, course_id, term_id,
+    snapshot_id, enrollment_id, student_id, course_id,
     snapshot_week, snapshot_date, attendance_pct_to_date,
     absences_to_date, lms_events_this_week,
     lms_events_rolling_3_weeks, assignments_due_to_date,
@@ -1777,7 +1753,7 @@ INSERT INTO silver.weekly_snapshot (
     financial_strain_self_report
 )
 SELECT
-    snapshot_id, enrollment_id, student_id, course_id, term_id,
+    snapshot_id, enrollment_id, student_id, course_id,
     snapshot_week, snapshot_date, attendance_pct_to_date,
     absences_to_date, lms_events_this_week,
     lms_events_rolling_3_weeks, assignments_due_to_date,
@@ -1787,5 +1763,5 @@ SELECT
     sleep_hours_per_night, employment_status,
     commute_minutes_one_way, internet_access,
     financial_strain_self_report
-FROM unique_snapshots;
+FROM deduplicated;
 GO
