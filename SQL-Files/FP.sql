@@ -406,8 +406,8 @@ validated AS (
         faculty,
         department,
 
-           CASE
-             WHEN age >= 18 THEN age
+        CASE
+             WHEN age BETWEEN 18 AND 50 THEN age 
           ELSE NULL
        END AS age,
 
@@ -415,7 +415,7 @@ validated AS (
         residency,
 
         CASE
-            WHEN entry_year BETWEEN 2017 AND 2026
+            WHEN entry_year BETWEEN 2017 AND YEAR(GETDATE())
                 THEN entry_year
             ELSE NULL
         END AS entry_year,
