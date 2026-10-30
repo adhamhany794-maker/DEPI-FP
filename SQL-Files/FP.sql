@@ -1765,3 +1765,545 @@ SELECT
     financial_strain_self_report
 FROM deduplicated;
 GO
+
+
+--==================================================
+-- gold schema creation
+--==================================================
+-- 1) Clear Facts first (no table references them)
+TRUNCATE TABLE gold.FactFinalResult;
+TRUNCATE TABLE gold.FactAttendance;
+TRUNCATE TABLE gold.FactAssessment;
+TRUNCATE TABLE gold.FactLMSWeekly;
+TRUNCATE TABLE gold.FactSupport;
+TRUNCATE TABLE gold.FactWeeklySnapshot;
+GO
+
+-- 2) Clear Dimensions
+TRUNCATE TABLE gold.DimStudent;
+TRUNCATE TABLE gold.DimCourse;
+TRUNCATE TABLE gold.DimEnrollment;
+TRUNCATE TABLE gold.DimAssessment;
+GO
+
+-- ==============================
+-- Dimensions
+-- ==============================
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DimStudent' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.DimStudent (
+        StudentKey INT IDENTITY(1,1),
+        StudentID VARCHAR(50) NOT NULL,
+        University VARCHAR(100),
+        Faculty VARCHAR(100),
+        Department VARCHAR(100),
+        Age INT,
+        Gender VARCHAR(20),
+        Residency VARCHAR(100),
+        EntryYear INT,
+        CurrentLevel VARCHAR(50),
+        EnrollmentStatus VARCHAR(50),
+        AdmissionRoute VARCHAR(50),
+        PriorGPA DECIMAL(4,2),
+        PriorFailedCourses INT,
+        PriorAttendancePct DECIMAL(5,2),
+        EmploymentStatus VARCHAR(50),
+        UsualStudyHoursPerWeek DECIMAL(5,2),
+        SleepHoursPerNight DECIMAL(4,2),
+        CommuteMinutesOneWay INT,
+        InternetAccess VARCHAR(50),
+        HousingType VARCHAR(50),
+        ScholarshipStatus VARCHAR(50),
+        FinancialStrainSelfReport VARCHAR(50),
+        PreferredSupport VARCHAR(100),
+        CONSTRAINT PK_DimStudent PRIMARY KEY (StudentKey)
+    );
+END;
+
+GO
+INSERT INTO gold.DimStudent (
+    StudentID,
+    University,
+    Faculty,
+    Department,
+    Age,
+    Gender,
+    Residency,
+    EntryYear,
+    CurrentLevel,
+    EnrollmentStatus,
+    AdmissionRoute,
+    PriorGPA,
+    PriorFailedCourses,
+    PriorAttendancePct,
+    EmploymentStatus,
+    UsualStudyHoursPerWeek,
+    SleepHoursPerNight,
+    CommuteMinutesOneWay,
+    InternetAccess,
+    HousingType,
+    ScholarshipStatus,
+    FinancialStrainSelfReport,
+    PreferredSupport
+)
+SELECT 
+    student_id,
+    university,
+    faculty,
+    department,
+    age,
+    gender,
+    residency,
+    entry_year,
+    current_level,
+    enrollment_status,
+    admission_route,
+    prior_gpa,
+    prior_failed_courses,
+    prior_attendance_pct,
+    employment_status,
+    usual_study_hours_per_week,
+    sleep_hours_per_night,
+    commute_minutes_one_way,
+    internet_access,
+    housing_type,
+    scholarship_status,
+    financial_strain_self_report,
+    preferred_support
+FROM silver.student;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DimCourse' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.DimCourse (
+        CourseKey INT IDENTITY(1,1) ,
+        CourseID VARCHAR(50) NOT NULL,
+        Department VARCHAR(100),
+        CourseName VARCHAR(150),
+        CourseType VARCHAR(50),
+        CreditHours INT,
+        DifficultyLevel INT,
+        DeliveryMode VARCHAR(50),
+        CONSTRAINT PK_DimCourse PRIMARY KEY (CourseKey)
+    );
+END;
+GO
+
+INSERT INTO gold.DimCourse (
+    CourseID,
+    Department,
+    CourseName,
+    CourseType,
+    CreditHours,
+    DifficultyLevel,
+    DeliveryMode
+)
+SELECT
+    course_id,
+    department,
+    course_name,
+    course_type,
+    credit_hours,
+    difficulty_level,
+    delivery_mode
+FROM silver.course;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DimEnrollment' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.DimEnrollment (
+        EnrollmentKey INT IDENTITY(1,1),
+        EnrollmentID VARCHAR(50) NOT NULL,
+        LevelAtEnrollment INT,
+        CreditHours INT,
+        RegistrationDate DATE,
+        Withdrawn BIT,
+        CONSTRAINT PK_DimEnrollment PRIMARY KEY (EnrollmentKey)
+    );
+END;
+GO
+
+INSERT INTO gold.DimEnrollment (
+    EnrollmentID,
+    LevelAtEnrollment,
+    CreditHours,
+    RegistrationDate,
+    Withdrawn
+)
+SELECT
+    enrollment_id,
+    level_at_enrollment,
+    credit_hours,
+    registration_date,
+    withdrawn
+FROM silver.enrollment;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DimAssessment' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.DimAssessment (
+        AssessmentKey INT IDENTITY(1,1),
+        AssessmentName VARCHAR(150) NOT NULL,
+        AssessmentType VARCHAR(50),
+        WeekDue INT,
+        DueDate DATE,
+        Weight DECIMAL(5,2),
+        CONSTRAINT PK_DimAssessment PRIMARY KEY (AssessmentKey)
+    );
+END;
+GO
+
+INSERT INTO gold.DimAssessment (
+    AssessmentName,
+    AssessmentType,
+    WeekDue,
+    DueDate,
+    Weight
+)
+SELECT DISTINCT
+    assessment_name,
+    assessment_type,
+    week_due,
+    due_date,
+    weight
+FROM silver.assessment;
+GO
+
+-- ==============================
+-- Facts
+-- ==============================
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FactFinalResult' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.FactFinalResult (
+        EnrollmentID VARCHAR(50),
+        EnrollmentKey INT NOT NULL,
+        StudentKey INT NOT NULL,
+        CourseKey INT NOT NULL,
+        FinalScore DECIMAL(5,2),
+        Passed BIT,
+        FinalGradeBand VARCHAR(10),
+        AtRiskFinalOutcome BIT,
+        OutcomeAvailableDate DATE,
+        CONSTRAINT PK_FactFinalResult PRIMARY KEY (EnrollmentID),
+        CONSTRAINT FK_FactFinalResult_Enrollment FOREIGN KEY (EnrollmentKey) REFERENCES gold.DimEnrollment(EnrollmentKey),
+        CONSTRAINT FK_FactFinalResult_Student FOREIGN KEY (StudentKey) REFERENCES gold.DimStudent(StudentKey),
+        CONSTRAINT FK_FactFinalResult_Course FOREIGN KEY (CourseKey) REFERENCES gold.DimCourse(CourseKey)
+    );
+END;
+GO
+
+INSERT INTO gold.FactFinalResult (
+    EnrollmentID,
+    EnrollmentKey,
+    StudentKey,
+    CourseKey,
+    FinalScore,
+    Passed,
+    FinalGradeBand,
+    AtRiskFinalOutcome,
+    OutcomeAvailableDate
+)
+SELECT DISTINCT
+    f.enrollment_id,
+    de.EnrollmentKey,
+    ds.StudentKey,
+    dc.CourseKey,
+    f.final_score,
+    f.passed,
+    f.final_grade_band,
+    f.at_risk_final_outcome,
+    f.outcome_available_date
+FROM silver.final_result f
+LEFT JOIN gold.DimEnrollment de 
+    ON f.enrollment_id = de.EnrollmentID
+LEFT JOIN gold.DimStudent ds 
+    ON f.student_id = ds.StudentID
+LEFT JOIN gold.DimCourse dc 
+    ON f.course_id = dc.CourseID;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FactAttendance' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.FactAttendance (
+        AttendanceRecordID VARCHAR(50),
+        EnrollmentKey INT NOT NULL,
+        StudentKey INT NOT NULL,
+        CourseKey INT NOT NULL,
+        EnrollmentID VARCHAR(50),
+        Week INT,
+        SessionNumber INT,
+        ClassDate DATE,
+        AttendanceStatus VARCHAR(50),
+        CONSTRAINT PK_FactAttendance PRIMARY KEY (AttendanceRecordID),
+        CONSTRAINT FK_FactAttendance_Enrollment FOREIGN KEY (EnrollmentKey) REFERENCES gold.DimEnrollment(EnrollmentKey),
+        CONSTRAINT FK_FactAttendance_Student FOREIGN KEY (StudentKey) REFERENCES gold.DimStudent(StudentKey),
+        CONSTRAINT FK_FactAttendance_Course FOREIGN KEY (CourseKey) REFERENCES gold.DimCourse(CourseKey)
+    );
+END;
+GO
+
+INSERT INTO gold.FactAttendance (
+    AttendanceRecordID,
+    EnrollmentKey,
+    StudentKey,
+    CourseKey,
+    EnrollmentID,
+    Week,
+    SessionNumber,
+    ClassDate,
+    AttendanceStatus
+)
+SELECT
+    a.attendance_record_id,
+    de.EnrollmentKey,
+    ds.StudentKey,
+    dc.CourseKey,
+    a.enrollment_id,
+    a.week,
+    a.session_number,
+    a.class_date,
+    a.attendance_status
+FROM silver.attendance  a
+JOIN silver.enrollment  e
+    ON e.enrollment_id = a.enrollment_id
+JOIN gold.DimEnrollment  de
+    ON de.EnrollmentID = e.enrollment_id
+JOIN gold.DimStudent  ds
+    ON ds.StudentID = e.student_id
+JOIN gold.DimCourse  dc
+    ON dc.CourseID = e.course_id;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FactAssessment' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.FactAssessment (
+        AssessmentID VARCHAR(50),
+        EnrollmentKey INT NOT NULL,
+        StudentKey INT NOT NULL,
+        CourseKey INT NOT NULL,
+        AssessmentKey INT NOT NULL,
+        EnrollmentID VARCHAR(50),
+        Score DECIMAL(7,2),
+        SubmissionStatus VARCHAR(50),
+        LateSubmission BIT,
+        CONSTRAINT PK_FactAssessment PRIMARY KEY (AssessmentID),
+        CONSTRAINT FK_FactAssessment_Enrollment FOREIGN KEY (EnrollmentKey) REFERENCES gold.DimEnrollment(EnrollmentKey),
+        CONSTRAINT FK_FactAssessment_Student FOREIGN KEY (StudentKey) REFERENCES gold.DimStudent(StudentKey),
+        CONSTRAINT FK_FactAssessment_Course FOREIGN KEY (CourseKey) REFERENCES gold.DimCourse(CourseKey),
+        CONSTRAINT FK_FactAssessment_Assessment FOREIGN KEY (AssessmentKey) REFERENCES gold.DimAssessment(AssessmentKey)
+    );
+END;
+GO
+
+INSERT INTO gold.FactAssessment (
+    AssessmentID,
+    EnrollmentKey,
+    StudentKey,
+    CourseKey,
+    AssessmentKey,
+    EnrollmentID,
+    Score,
+    SubmissionStatus,
+    LateSubmission
+)
+SELECT
+    a.assessment_id,
+    de.EnrollmentKey,
+    ds.StudentKey,
+    dc.CourseKey,
+    da.AssessmentKey,
+    a.enrollment_id,
+    a.score,
+    a.submission_status,
+    a.late_submission
+FROM silver.assessment AS a
+JOIN silver.enrollment AS e
+    ON e.enrollment_id = a.enrollment_id
+JOIN gold.DimEnrollment AS de
+    ON de.EnrollmentID = e.enrollment_id
+JOIN gold.DimStudent AS ds
+    ON ds.StudentID = e.student_id
+JOIN gold.DimCourse AS dc
+    ON dc.CourseID = e.course_id
+JOIN gold.DimAssessment AS da
+    ON da.AssessmentName = a.assessment_name;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FactLMSWeekly' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.FactLMSWeekly (
+        LMSRecordID VARCHAR(50),
+        EnrollmentKey INT NOT NULL,
+        StudentKey INT NOT NULL,
+        CourseKey INT NOT NULL,
+        EnrollmentID VARCHAR(50),
+        Week INT,
+        LoginCount INT,
+        ResourceViews INT,
+        ForumPosts INT,
+        VideoMinutes DECIMAL(8,2),
+        LastActivityDaysAgo INT,
+        CONSTRAINT PK_FactLMSWeekly PRIMARY KEY (LMSRecordID),
+        CONSTRAINT FK_FactLMSWeekly_Enrollment FOREIGN KEY (EnrollmentKey) REFERENCES gold.DimEnrollment(EnrollmentKey),
+        CONSTRAINT FK_FactLMSWeekly_Student FOREIGN KEY (StudentKey) REFERENCES gold.DimStudent(StudentKey),
+        CONSTRAINT FK_FactLMSWeekly_Course FOREIGN KEY (CourseKey) REFERENCES gold.DimCourse(CourseKey)
+    );
+END;
+GO
+
+INSERT INTO gold.FactLMSWeekly (
+    LMSRecordID,
+    EnrollmentKey,
+    StudentKey,
+    CourseKey,
+    EnrollmentID,
+    Week,
+    LoginCount,
+    ResourceViews,
+    ForumPosts,
+    VideoMinutes,
+    LastActivityDaysAgo
+)
+SELECT
+    l.lms_record_id,
+    de.EnrollmentKey,
+    ds.StudentKey,
+    dc.CourseKey,
+    l.enrollment_id,
+    l.week,
+    l.login_count,
+    l.resource_views,
+    l.forum_posts,
+    l.video_minutes,
+    l.last_activity_days_ago
+FROM silver.lms_activity AS l
+JOIN silver.enrollment AS e
+    ON e.enrollment_id = l.enrollment_id
+JOIN gold.DimEnrollment AS de
+    ON de.EnrollmentID = e.enrollment_id
+JOIN gold.DimStudent AS ds
+    ON ds.StudentID = e.student_id
+JOIN gold.DimCourse AS dc
+    ON dc.CourseID = e.course_id;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FactSupport' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.FactSupport (
+        SupportEventID VARCHAR(50),
+        EnrollmentKey INT NOT NULL,
+        StudentKey INT NOT NULL,
+        CourseKey INT NOT NULL,
+        EnrollmentID VARCHAR(50),
+        SupportType VARCHAR(100),
+        EventWeek INT,
+        Participated BIT,
+        FollowUpCompleted BIT,
+        CONSTRAINT PK_SupportEventID PRIMARY KEY (SupportEventID),
+        CONSTRAINT FK_SupportEventID_Enrollment FOREIGN KEY (EnrollmentKey) REFERENCES gold.DimEnrollment(EnrollmentKey),
+        CONSTRAINT FK_SupportEventID_Student FOREIGN KEY (StudentKey) REFERENCES gold.DimStudent(StudentKey),
+        CONSTRAINT FK_SupportEventID_Course FOREIGN KEY (CourseKey) REFERENCES gold.DimCourse(CourseKey)
+    );
+END;
+GO
+
+INSERT INTO gold.FactSupport (
+    SupportEventID,
+    EnrollmentKey,
+    StudentKey,
+    CourseKey,
+    EnrollmentID,
+    SupportType,
+    EventWeek,
+    Participated,
+    FollowUpCompleted
+)
+SELECT
+    s.support_event_id,
+    de.EnrollmentKey,
+    ds.StudentKey,
+    dc.CourseKey,
+    s.enrollment_id,
+    s.support_type,
+    s.event_week,
+    s.participated,
+    s.follow_up_completed
+FROM silver.student_support AS s
+JOIN silver.enrollment AS e
+    ON e.enrollment_id = s.enrollment_id
+JOIN gold.DimEnrollment AS de
+    ON de.EnrollmentID = e.enrollment_id
+JOIN gold.DimStudent AS ds
+    ON ds.StudentID = e.student_id
+JOIN gold.DimCourse AS dc
+    ON dc.CourseID = e.course_id;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'FactWeeklySnapshot' AND schema_id = SCHEMA_ID('gold'))
+BEGIN
+    CREATE TABLE gold.FactWeeklySnapshot (
+        SnapshotID VARCHAR(50),
+        EnrollmentKey INT NOT NULL,
+        StudentKey INT NOT NULL,
+        CourseKey INT NOT NULL,
+        EnrollmentID VARCHAR(50),
+        SnapshotWeek INT,
+        AttendancePctToDate DECIMAL(5,2),
+        AbsencesToDate INT,
+        LMSEventsThisWeek INT,
+        LMSEventsRolling3Weeks INT,
+        AssignmentsDueToDate INT,
+        AssignmentsSubmittedToDate INT,
+        LateSubmissionsToDate INT,
+        AssessmentAverageAvailableToDate DECIMAL(5,2),
+        CONSTRAINT PK_FactWeeklySnapshot PRIMARY KEY (SnapshotID),
+        CONSTRAINT FK_FactWeeklySnapshot_Enrollment FOREIGN KEY (EnrollmentKey) REFERENCES gold.DimEnrollment(EnrollmentKey),
+        CONSTRAINT FK_FactWeeklySnapshot_Student FOREIGN KEY (StudentKey) REFERENCES gold.DimStudent(StudentKey),
+        CONSTRAINT FK_FactWeeklySnapshot_Course FOREIGN KEY (CourseKey) REFERENCES gold.DimCourse(CourseKey)
+    );
+END;
+GO
+
+INSERT INTO gold.FactWeeklySnapshot (
+    SnapshotID,
+    EnrollmentKey,
+    StudentKey,
+    CourseKey,
+    EnrollmentID,
+    SnapshotWeek,
+    AttendancePctToDate,
+    AbsencesToDate,
+    LMSEventsThisWeek,
+    LMSEventsRolling3Weeks,
+    AssignmentsDueToDate,
+    AssignmentsSubmittedToDate,
+    LateSubmissionsToDate,
+    AssessmentAverageAvailableToDate
+)
+SELECT
+    w.snapshot_id,
+    de.EnrollmentKey,
+    ds.StudentKey,
+    dc.CourseKey,
+    w.enrollment_id,
+    w.snapshot_week,
+    w.attendance_pct_to_date,
+    w.absences_to_date,
+    w.lms_events_this_week,
+    w.lms_events_rolling_3_weeks,
+    w.assignments_due_to_date,
+    w.assignments_submitted_to_date,
+    w.late_submissions_to_date,
+    w.assessment_average_available_to_date
+FROM silver.weekly_snapshot AS w
+JOIN silver.enrollment AS e
+    ON e.enrollment_id = w.enrollment_id
+JOIN gold.DimEnrollment AS de
+    ON de.EnrollmentID = e.enrollment_id
+JOIN gold.DimStudent AS ds
+    ON ds.StudentID = e.student_id
+JOIN gold.DimCourse AS dc
+    ON dc.CourseID = e.course_id;
+GO
